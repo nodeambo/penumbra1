@@ -661,6 +661,8 @@ impl ClientState {
             height,
             fragments,
             nullifiers,
+            quarantined_note_commitments,
+            reverted_nullifiers,
         }: CompactBlock,
     ) -> Result<(), anyhow::Error> {
         // We have to do a bit of a dance to use None as "-1" and handle genesis notes.

@@ -263,12 +263,12 @@ impl Reader {
         let rows = query!(
             "
             SELECT DISTINCT ON (identity_key)
-            identity_key, 
-            epoch, 
-            validator_reward_rate, 
+            identity_key,
+            epoch,
+            validator_reward_rate,
             validator_exchange_rate
 
-            FROM validator_rates 
+            FROM validator_rates
             WHERE epoch <= $1
             ORDER BY identity_key, epoch DESC",
             epoch_index as i64,
@@ -446,11 +446,35 @@ impl Reader {
             .fetch(&pool)
             .peekable();
 
+            let mut quarantined_note_commitments = query!(
+                "SELECT quarantine_height, note_commitment
+                    FROM quarantined_note_history
+                    WHERE quarantine_height BETWEEN $1 AND $2
+                    ORDER BY quarantine_height ASC",
+                start_height,
+                end_height
+            )
+            .fetch(&pool)
+            .peekable();
+
+            let mut reverted_nullifiers = query!(
+                "SELECT revert_height, nullifier
+                    FROM reverted_nullifier_history
+                    WHERE revert_height BETWEEN $1 AND $2
+                    ORDER BY revert_height ASC",
+                start_height,
+                end_height
+            )
+            .fetch(&pool)
+            .peekable();
+
             for height in start_height..=end_height {
                 let mut compact_block = CompactBlock {
                     height: height as u64,
                     fragments: vec![],
                     nullifiers: vec![],
+                    quarantined_note_commitments: vec![],
+                    reverted_nullifiers: vec![],
                 };
 
                 while let Some(row) = Pin::new(&mut nullifiers).peek().await {
@@ -485,6 +509,36 @@ impl Reader {
                         ephemeral_key: row.ephemeral_key.into(),
                         encrypted_note: row.encrypted_note.into(),
                     });
+                }
+
+                while let Some(row) = Pin::new(&mut quarantined_note_commitments).peek().await {
+                    // Bail out of the loop if the next iteration would be a different height
+                    if let Ok(row) = row {
+                        if row.quarantine_height != height {
+                            break;
+                        }
+                    }
+
+                    let row = Pin::new(&mut quarantined_note_commitments)
+                        .next()
+                        .await
+                        .expect("we already peeked, so there is a next row")?;
+                    compact_block.quarantined_note_commitments.push(row.note_commitment.into());
+                }
+
+                while let Some(row) = Pin::new(&mut reverted_nullifiers).peek().await {
+                    // Bail out of the loop if the next iteration would be a different height
+                    if let Ok(row) = row {
+                        if row.revert_height != height {
+                            break;
+                        }
+                    }
+
+                    let row = Pin::new(&mut reverted_nullifiers)
+                        .next()
+                        .await
+                        .expect("we already peeked, so there is a next row")?;
+                    compact_block.reverted_nullifiers.push(row.nullifier.into());
                 }
 
                 tracing::debug!(

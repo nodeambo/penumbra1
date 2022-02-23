@@ -30,6 +30,11 @@ message CompactBlock {
   repeated StateFragment fragments = 2;
   // Nullifiers identifying spent notes.
   repeated bytes nullifiers = 3;
+  // Note commitments for notes that have been quarantined in this block.
+  repeated bytes quarantined_note_commitments = 4;
+  // Nullifiers for notes that were reverted in this block due to slashing while they were
+  // unbonding.
+  repeated bytes reverted_nullifiers = 5;
 }
 
 // The minimum data needed to identify a new note.
