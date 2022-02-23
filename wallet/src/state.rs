@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     mem,
     time::{Duration, SystemTime},
 };
@@ -12,8 +12,8 @@ use penumbra_crypto::{
     merkle::{Frontier, NoteCommitmentTree, Tree, TreeExt},
     note, Address, FieldExt, Note, Nullifier, Value,
 };
-use penumbra_proto::light_wallet::{CompactBlock, StateFragment};
-use penumbra_stake::{RateData, STAKING_TOKEN_ASSET_ID, STAKING_TOKEN_DENOM};
+use penumbra_proto::light_wallet::{CompactBlock, QuarantinedFragment, StateFragment};
+use penumbra_stake::{IdentityKey, RateData, STAKING_TOKEN_ASSET_ID, STAKING_TOKEN_DENOM};
 use penumbra_transaction::Transaction;
 use rand::seq::SliceRandom;
 use rand_core::{CryptoRng, RngCore};
@@ -48,7 +48,14 @@ pub struct ClientState {
     submitted_change_set: BTreeMap<note::Commitment, (SystemTime, Note)>,
     /// Notes that we have spent.
     spent_set: BTreeMap<note::Commitment, Note>,
+    /// Notes that are currently unbonding and will be available after the unbonding period (or will
+    /// become reverted if slashing occurs).
+    unbonding_set: BTreeMap<note::Commitment, QuarantinedNote>,
+    /// Nullifiers that are still unbonding and may be reverted, indexed by the height at which they
+    /// unbond and become permanent.
+    unbonding_nullifiers: BTreeMap<u64, BTreeSet<Nullifier>>,
     /// Map of note commitment to full transaction data for transactions we have visibility into.
+    #[allow(unused)]
     transactions: BTreeMap<note::Commitment, Option<Vec<u8>>>,
     /// Map of asset IDs to (raw) asset denominations.
     asset_cache: asset::Cache,
@@ -64,6 +71,20 @@ pub enum SubmittedNoteCommitment {
     Spend(note::Commitment),
 }
 
+/// A quarantined note, associated with the height at which it was quarantined, the height at which
+/// it will unbond, and the validator with which it was quarantined.
+#[derive(Clone, Debug)]
+pub struct QuarantinedNote {
+    /// The quarantined [`Note`].
+    pub note: Note,
+    /// The height at which it was quarantined in the first place.
+    pub quarantined_height: u64,
+    /// The height at which it will unbond (assuming slashing does not occur).
+    pub unbonding_height: u64,
+    /// The validator's identity key with which the quarantined note is associated.
+    pub validator_identity_key: IdentityKey,
+}
+
 #[derive(Clone, Debug)]
 /// A note which has not yet been confirmed on the chain as spent.
 pub enum UnspentNote<'a> {
@@ -76,6 +97,7 @@ pub enum UnspentNote<'a> {
     /// A note which resulted as predicted change from a spend transaction, but which has not
     /// yet been confirmed on the chain (so we cannot spend it yet).
     SubmittedChange(&'a Note),
+    // TODO: add unbonding notes here
 }
 
 impl<'a> UnspentNote<'a> {
@@ -108,6 +130,8 @@ impl ClientState {
             submitted_spend_set: BTreeMap::new(),
             submitted_change_set: BTreeMap::new(),
             spent_set: BTreeMap::new(),
+            unbonding_set: BTreeMap::new(),
+            unbonding_nullifiers: BTreeMap::new(),
             transactions: BTreeMap::new(),
             asset_cache: Default::default(),
             wallet,
@@ -662,6 +686,7 @@ impl ClientState {
             fragments,
             nullifiers,
             quarantined_notes,
+            quarantined_nullifiers,
             reverted_nullifiers,
         }: CompactBlock,
     ) -> Result<(), anyhow::Error> {
@@ -679,6 +704,53 @@ impl ClientState {
         }
         tracing::debug!(fragments_len = fragments.len(), "starting block scan");
 
+        // Process all the notes quarantined in this block as a result of undelegations
+        for quarantined_fragment in quarantined_notes.into_iter() {
+            if let QuarantinedFragment {
+                fragment:
+                    Some(StateFragment {
+                        note_commitment,
+                        ephemeral_key,
+                        encrypted_note,
+                    }),
+                validator_identity_key: Some(validator_identity_key),
+                unbonding_height,
+            } = quarantined_fragment
+            {
+                // Try to decrypt the encrypted note using the ephemeral key and persistent incoming
+                // viewing key -- if it doesn't decrypt, it wasn't meant for us.
+                if let Ok(note) = Note::decrypt(
+                    encrypted_note.as_ref(),
+                    self.wallet.incoming_viewing_key(),
+                    &ephemeral_key
+                        .as_ref()
+                        .try_into()
+                        .context("invalid ephemeral key")?,
+                ) {
+                    let validator_identity_key: IdentityKey = validator_identity_key
+                        .try_into()
+                        .context("invalid validator identity key")?;
+
+                    let note_commitment: note::Commitment =
+                        note::Commitment::try_from(&note_commitment[..])
+                            .context("invalid note commitment")?;
+
+                    self.unbonding_set.insert(
+                        note_commitment,
+                        QuarantinedNote {
+                            note,
+                            quarantined_height: height,
+                            unbonding_height,
+                            validator_identity_key,
+                        },
+                    );
+                }
+            } else {
+                anyhow::bail!("missing fields in quarantined state fragment");
+            }
+        }
+
+        // Process all the notes received in this block
         for StateFragment {
             note_commitment,
             ephemeral_key,
@@ -713,22 +785,44 @@ impl ClientState {
                     .note_commitment_tree
                     .authentication_path(&note_commitment)
                     .expect("we just witnessed this commitment");
-                self.nullifier_map.insert(
-                    self.wallet
-                        .full_viewing_key()
-                        .derive_nullifier(pos, &note_commitment),
-                    note_commitment,
-                );
+
+                let nullifier = self
+                    .wallet
+                    .full_viewing_key()
+                    .derive_nullifier(pos, &note_commitment);
+
+                // Keep track of the nullifier for this note.
+                self.nullifier_map.insert(nullifier, note_commitment);
 
                 // If the note was a submitted change note, remove it from the submitted change set
                 if self.submitted_change_set.remove(&note_commitment).is_some() {
-                    tracing::debug!(value = ?note.value(), "found submitted change note while scanning, removing it from the submitted change set");
+                    tracing::debug!(
+                        value = ?note.value(),
+                        "found submitted change note while scanning, removing it from the submitted change set"
+                    );
+                }
+
+                // If the note was previously quarantined, remove it from the quarantined set
+                if self.unbonding_set.remove(&note_commitment).is_some() {
+                    tracing::debug!(
+                        value = ?note.value(),
+                        "found quarantined note while scanning, removing it from the quarantined set"
+                    );
                 }
 
                 // Insert the note into the received set
                 self.unspent_set.insert(note_commitment, note.clone());
             }
         }
+
+        // The set of nullifiers quarantined in this block. This is a subset of the nullifiers in
+        // this block, and is used to determine whether to mark whether a nullifier could possibly
+        // be reverted in the future.
+        let quarantined_nullifiers_in_this_block = quarantined_nullifiers
+            .into_iter()
+            .map(|qn| Ok((Nullifier::try_from(&qn.nullifier[..])?, qn.unbonding_height)))
+            .collect::<anyhow::Result<BTreeMap<Nullifier, u64>>>()
+            .context("invalid nullifier in quarantined nullifier set")?;
 
         // Scan through the list of nullifiers to find those which refer to notes in our unspent
         // set, submitted change set, or submitted spend set and move them into the spent set.
@@ -737,8 +831,7 @@ impl ClientState {
             let nullifier = nullifier.as_ref().try_into()?;
 
             // Try to find the corresponding note commitment in the nullifier map
-            if let Some(&note_commitment) = self.nullifier_map.get(&nullifier) {
-                // Try to remove the nullifier from the unspent set
+            if let Some(note_commitment) = self.nullifier_map.get(&nullifier) {
                 if let Some(note) = self.unspent_set.remove(&note_commitment) {
                     // Insert the note into the spent set
                     tracing::debug!(
@@ -746,8 +839,7 @@ impl ClientState {
                         ?nullifier,
                         "found nullifier for unspent note, marking it as spent"
                     );
-                    self.spent_set.insert(note_commitment, note);
-                    self.note_commitment_tree.remove_witness(&note_commitment);
+                    self.spent_set.insert(*note_commitment, note);
                 } else if let Some((_, note)) = self.submitted_spend_set.remove(&note_commitment) {
                     // Insert the note into the spent set
                     tracing::debug!(
@@ -755,8 +847,7 @@ impl ClientState {
                         ?nullifier,
                         "found nullifier for submitted spend note, marking it as spent"
                     );
-                    self.spent_set.insert(note_commitment, note);
-                    self.note_commitment_tree.remove_witness(&note_commitment);
+                    self.spent_set.insert(*note_commitment, note);
                 } else if let Some((_, note)) = self.submitted_change_set.remove(&note_commitment) {
                     // Insert the note into the spent set
                     tracing::debug!(
@@ -764,20 +855,117 @@ impl ClientState {
                         ?nullifier,
                         "found nullifier for submitted change note, marking it as spent"
                     );
-                    self.spent_set.insert(note_commitment, note);
-                    self.note_commitment_tree.remove_witness(&note_commitment);
+                    self.spent_set.insert(*note_commitment, note);
+                } else if let Some(QuarantinedNote { note, .. }) =
+                    self.unbonding_set.remove(&note_commitment)
+                {
+                    // If the nullifier is for a note that is still in quarantine, something has
+                    // gone wrong, because you can't spend quarantined notes
+                    tracing::warn!(
+                        ?nullifier,
+                        "found nullifier for quarantined note: possibly corrupted state?"
+                    )
                 } else if self.spent_set.contains_key(&note_commitment) {
                     // If the nullifier is already in the spent set, it means we've already
                     // processed this note and it's spent. This should never happen
                     tracing::warn!(
                         ?nullifier,
-                        "found nullifier for already-spent note, possibly corrupted state?"
+                        "found nullifier for already-spent note: possibly corrupted state?"
                     )
+                }
+
+                // If the nullifier was for a spend that was not quarantined, we can safely
+                // unwitness the commitment now to prevent bloating the NCT size with unnecessary
+                // commitments we'll never use for proving things again. However, if the nullifier
+                // *was* quarantined, it could possibly be reverted, so we need to keep the
+                // corresponding commitment in the NCT. At the time that the note unbonds, we'll
+                // remove it from the NCT.
+                match quarantined_nullifiers_in_this_block.get(&nullifier) {
+                    Some(&unbonding_height) => {
+                        // Keep track of this nullifier so that when it unbonds we can erase the
+                        // corresponding note commitment from the NCT.
+                        self.unbonding_nullifiers
+                            .entry(unbonding_height)
+                            .or_default()
+                            .insert(nullifier);
+                    }
+                    None => {
+                        // Immediately erase the note commitment from the NCT.
+                        self.note_commitment_tree.remove_witness(&note_commitment);
+                    }
                 }
             } else {
                 // This happens all the time, but if you really want to see every nullifier,
                 // look at trace output
                 tracing::trace!(?nullifier, "found unknown nullifier while scanning");
+            }
+        }
+
+        // For all the reverted nullifiers, make spendable again any of our notes that they refer to
+        for nullifier in reverted_nullifiers {
+            // Try to decode the nullifier
+            let nullifier = nullifier.as_ref().try_into()?;
+
+            // Try to find the corresponding note commitment in the nullifier map
+            if let Some(note_commitment) = self.nullifier_map.get(&nullifier) {
+                if let Some(note) = self.spent_set.remove(&note_commitment) {
+                    // Insert the note into the unspent set
+                    tracing::debug!(
+                        value = ?note.value(),
+                        ?nullifier,
+                        "found reverted nullifier for spent note, marking it as unspent"
+                    );
+                    self.unspent_set.insert(*note_commitment, note);
+                } else if let Some((_, note)) = self.submitted_change_set.remove(&note_commitment) {
+                    // Insert the note into the unspent set
+                    tracing::debug!(
+                        value = ?note.value(),
+                        ?nullifier,
+                        "found reverted nullifier for submitted change note, marking it as unspent"
+                    );
+                    self.unspent_set.insert(*note_commitment, note);
+                } else if let Some((_, note)) = self.submitted_spend_set.remove(&note_commitment) {
+                    // Insert the note into the unspent set
+                    tracing::debug!(
+                        value = ?note.value(),
+                        ?nullifier,
+                        "found reverted nullifier for submitted spend note, marking it as unspent"
+                    );
+                    self.unspent_set.insert(*note_commitment, note);
+                } else if let Some(QuarantinedNote { note, .. }) =
+                    self.unbonding_set.remove(&note_commitment)
+                {
+                    // Insert the note into the unspent set
+                    tracing::debug!(
+                        value = ?note.value(),
+                        ?nullifier,
+                        "found reverted nullifier for unbonding note, marking it as unspent"
+                    );
+                    self.unspent_set.insert(*note_commitment, note);
+                } else if self.unspent_set.contains_key(&note_commitment) {
+                    // If the nullifier is already in the unspent set, it means we've already
+                    // processed this note and it's already been made unspent. This should never
+                    // happen because nullifiers only revert once.
+                    tracing::warn!(
+                        ?nullifier,
+                        "found reverted nullifier for unspent note, possibly corrupted state?"
+                    )
+                }
+            }
+
+            // Forget about this nullifier because the positioned note is irrelevant now.
+            self.nullifier_map.remove(&nullifier);
+        }
+
+        // Erase all successfully unbonded nullifiers that unbonded in this block.
+        for nullifier in self
+            .unbonding_nullifiers
+            .remove(&height)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(note_commitment) = self.nullifier_map.get(&nullifier) {
+                self.note_commitment_tree.remove_witness(note_commitment);
             }
         }
 
@@ -808,6 +996,8 @@ mod serde_helpers {
         #[serde(default, alias = "pending_change_set")]
         submitted_change_set: Vec<(String, SystemTime, String)>,
         spent_set: Vec<(String, String)>,
+        unbonding_set: Vec<(String, String)>,
+        unbonding_nullifiers: Vec<(u64, Vec<String>)>,
         transactions: Vec<(String, String)>,
         asset_registry: Vec<(asset::Id, String)>,
         chain_params: Option<ChainParams>,
@@ -912,6 +1102,16 @@ mod serde_helpers {
                         )
                     })
                     .collect(),
+                unbonding_set: state
+                    .unbonding_set
+                    .iter()
+                    .map(|(commitment, quarantined_note)| {
+                        (
+                            hex::encode(commitment.0.to_bytes()),
+                            hex::encode(quarantined_note.to_bytes()),
+                        )
+                    })
+                    .collect(),
                 asset_registry: state
                     .asset_cache
                     .iter()
@@ -983,6 +1183,8 @@ mod serde_helpers {
                 submitted_spend_set,
                 submitted_change_set,
                 spent_set,
+                unbonding_set,
+                unbonding_nullifiers,
                 asset_cache: asset_registry.try_into()?,
                 // TODO: serialize full transactions
                 transactions: Default::default(),

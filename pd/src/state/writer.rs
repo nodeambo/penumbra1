@@ -377,6 +377,16 @@ impl Writer {
             for &nullifier in nullifiers.iter() {
                 let nullifier_bytes = &<[u8; 32]>::from(nullifier)[..];
 
+                // Keep track of the historical fact that we quarantined this nullifier at this
+                // height
+                query!(
+                    "INSERT INTO quarantined_nullifier_history (nullifier, quarantine_height, unbonding_height)
+                    VALUES ($1, $2, $3)",
+                    &nullifier_bytes[..],
+                    height as i64,
+                    unbonding_height as i64,
+                ).execute(&mut dbtx).await?;
+
                 // Keep track of the nullifier associated with the block height
                 query!(
                     r#"

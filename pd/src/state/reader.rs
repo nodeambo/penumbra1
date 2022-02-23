@@ -16,7 +16,7 @@ use penumbra_crypto::{
 };
 use penumbra_proto::{
     chain,
-    light_wallet::{CompactBlock, QuarantinedFragment, StateFragment},
+    light_wallet::{CompactBlock, QuarantinedFragment, QuarantinedNullifier, StateFragment},
     stake,
     thin_wallet::{Asset, TransactionDetail},
     Protobuf,
@@ -464,6 +464,17 @@ impl Reader {
             .fetch(&pool)
             .peekable();
 
+            let mut quarantined_nullifiers = query!(
+                "SELECT quarantine_height, unbonding_height, nullifier
+                    FROM quarantined_nullifier_history
+                    WHERE quarantine_height BETWEEN $1 AND $2
+                    ORDER BY quarantine_height ASC",
+                start_height,
+                end_height
+            )
+            .fetch(&pool)
+            .peekable();
+
             let mut reverted_nullifiers = query!(
                 "SELECT revert_height, nullifier
                     FROM reverted_nullifier_history
@@ -482,6 +493,7 @@ impl Reader {
                     nullifiers: vec![],
                     quarantined_notes: vec![],
                     reverted_nullifiers: vec![],
+                    quarantined_nullifiers: vec![],
                 };
 
                 while let Some(row) = Pin::new(&mut nullifiers).peek().await {
@@ -537,6 +549,24 @@ impl Reader {
                             encrypted_note: row.encrypted_note.into(),
                         }),
                         validator_identity_key: Some(stake::IdentityKey { ik: row.validator_identity_key }),
+                        unbonding_height: row.unbonding_height.try_into().expect("unbonding height is positive"),
+                    });
+                }
+
+                while let Some(row) = Pin::new(&mut quarantined_nullifiers).peek().await {
+                    // Bail out of the loop if the next iteration would be a different height
+                    if let Ok(row) = row {
+                        if row.quarantine_height != height {
+                            break;
+                        }
+                    }
+
+                    let row = Pin::new(&mut quarantined_nullifiers)
+                        .next()
+                        .await
+                        .expect("we already peeked, so there is a next row")?;
+                    compact_block.quarantined_nullifiers.push(QuarantinedNullifier {
+                        nullifier: row.nullifier.into(),
                         unbonding_height: row.unbonding_height.try_into().expect("unbonding height is positive"),
                     });
                 }

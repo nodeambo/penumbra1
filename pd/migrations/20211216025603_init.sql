@@ -157,6 +157,18 @@ CREATE TABLE IF NOT EXISTS quarantined_note_history (
 );
 CREATE INDEX ON quarantined_note_history (quarantine_height);
 
+-- History of quarantined nullifiers, associated with the height at which they were quarantined
+CREATE TABLE IF NOT EXISTS quarantined_nullifier_history (
+    nullifier bytea PRIMARY KEY,
+    quarantine_height bigint NOT NULL REFERENCES blocks (height), -- height at which the nullifier was quarantined
+    unbonding_height bigint NOT NULL, -- height at which to make the spend permanent if not slashed
+    -- quarantine_height can't be negative
+    CONSTRAINT positive_quarantine_height CHECK (quarantine_height >= 0),
+    -- unbonding_height can't be negative
+    CONSTRAINT positive_unbonding_height CHECK (unbonding_height >= 0)
+);
+CREATE INDEX ON quarantined_nullifier_history (quarantine_height);
+
 -- History of reverted nullifiers, associated with the height at which they were reverted
 CREATE TABLE IF NOT EXISTS reverted_nullifier_history (
     nullifier bytea PRIMARY KEY,

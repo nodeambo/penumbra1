@@ -32,9 +32,10 @@ message CompactBlock {
   repeated bytes nullifiers = 3;
   // Note commitments for notes that have been quarantined in this block.
   repeated QuarantinedFragment quarantined_notes = 4;
-  // Nullifiers for notes that were reverted in this block due to slashing while they were
-  // unbonding.
-  repeated bytes reverted_nullifiers = 5;
+  // Quarantined nullifiers for notes that were spent in undelegation transactions in this block.
+  repeated QuarantinedNullifier quarantined_nullifiers = 5;
+  // Nullifiers for notes that were reverted in this block due to slashing.
+  repeated bytes reverted_nullifiers = 6;
 }
 
 // The minimum data needed to identify a new note.
@@ -55,6 +56,13 @@ message QuarantinedFragment {
   stake.IdentityKey validator_identity_key = 2;
   // The height at which this fragment will become spendable if slashing does not occur.
   uint64 unbonding_height = 3;
+}
+
+message QuarantinedNullifier {
+  // The nullifier that has been quarantined.
+  bytes nullifier = 1;
+  // The height at which the nullifier will unbond, if slashing does not occur.
+  uint64 unbonding_height = 2;
 }
 
 // Requests the global configuration data for the chain.

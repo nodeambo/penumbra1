@@ -33,6 +33,39 @@
       "nullable": []
     }
   },
+  "11ab338e647ef4f164389c9323ef05a26ec9d0f5110a4d6cf917da9b214288b4": {
+    "query": "SELECT quarantine_height, unbonding_height, nullifier\n                    FROM quarantined_nullifier_history\n                    WHERE quarantine_height BETWEEN $1 AND $2\n                    ORDER BY quarantine_height ASC",
+    "describe": {
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "quarantine_height",
+          "type_info": "Int8"
+        },
+        {
+          "ordinal": 1,
+          "name": "unbonding_height",
+          "type_info": "Int8"
+        },
+        {
+          "ordinal": 2,
+          "name": "nullifier",
+          "type_info": "Bytea"
+        }
+      ],
+      "parameters": {
+        "Left": [
+          "Int8",
+          "Int8"
+        ]
+      },
+      "nullable": [
+        false,
+        false,
+        false
+      ]
+    }
+  },
   "1329be38905d802df374dc416fd0ce36d0b556af2d3d07d6248722b7025bfe3d": {
     "query": "SELECT identity_key, epoch, validator_reward_rate, validator_exchange_rate\n            FROM validator_rates\n            WHERE epoch = (SELECT MAX(epoch) from base_rates)",
     "describe": {
@@ -325,6 +358,20 @@
         false,
         false
       ]
+    }
+  },
+  "5eaa71ba4d8cfa56da8baae48fc77acfdfe79b87972f10cc1ca272c16020547d": {
+    "query": "INSERT INTO quarantined_nullifier_history (nullifier, quarantine_height, unbonding_height)\n                    VALUES ($1, $2, $3)",
+    "describe": {
+      "columns": [],
+      "parameters": {
+        "Left": [
+          "Bytea",
+          "Int8",
+          "Int8"
+        ]
+      },
+      "nullable": []
     }
   },
   "5f0f6af5d9b30fbea0e33d478e61d311cd065dd0552bfc3988710b6655a3cd1c": {
