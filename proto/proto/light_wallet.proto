@@ -31,7 +31,7 @@ message CompactBlock {
   // Nullifiers identifying spent notes.
   repeated bytes nullifiers = 3;
   // Note commitments for notes that have been quarantined in this block.
-  repeated bytes quarantined_note_commitments = 4;
+  repeated QuarantinedFragment quarantined_notes = 4;
   // Nullifiers for notes that were reverted in this block due to slashing while they were
   // unbonding.
   repeated bytes reverted_nullifiers = 5;
@@ -46,6 +46,15 @@ message StateFragment {
   // An encryption of the newly created note.
   // 132 = 1(type) + 11(d) + 8(amount) + 32(asset_id) + 32(rcm) + 32(pk_d) + 16(MAC) bytes.
   bytes encrypted_note = 4;
+}
+
+message QuarantinedFragment {
+  // The state fragment that has been quarantined.
+  StateFragment fragment = 1;
+  // The validator identity key for this state fragment.
+  stake.IdentityKey validator_identity_key = 2;
+  // The height at which this fragment will become spendable if slashing does not occur.
+  uint64 unbonding_height = 3;
 }
 
 // Requests the global configuration data for the chain.

@@ -33,33 +33,6 @@
       "nullable": []
     }
   },
-  "0d5d8bcc59d9376d506b2eaa41da9d64685a08545d352951b04c1b2d1fc6f42c": {
-    "query": "SELECT quarantine_height, note_commitment\n                    FROM quarantined_note_history\n                    WHERE quarantine_height BETWEEN $1 AND $2\n                    ORDER BY quarantine_height ASC",
-    "describe": {
-      "columns": [
-        {
-          "ordinal": 0,
-          "name": "quarantine_height",
-          "type_info": "Int8"
-        },
-        {
-          "ordinal": 1,
-          "name": "note_commitment",
-          "type_info": "Bytea"
-        }
-      ],
-      "parameters": {
-        "Left": [
-          "Int8",
-          "Int8"
-        ]
-      },
-      "nullable": [
-        false,
-        false
-      ]
-    }
-  },
   "1329be38905d802df374dc416fd0ce36d0b556af2d3d07d6248722b7025bfe3d": {
     "query": "SELECT identity_key, epoch, validator_reward_rate, validator_exchange_rate\n            FROM validator_rates\n            WHERE epoch = (SELECT MAX(epoch) from base_rates)",
     "describe": {
@@ -370,6 +343,57 @@
         ]
       },
       "nullable": [
+        false
+      ]
+    }
+  },
+  "6611c0fd595960ecd3a1954b9d456563b89036db7468de9ee390ab19ae728185": {
+    "query": "SELECT\n                    quarantine_height,\n                    unbonding_height,\n                    note_commitment,\n                    ephemeral_key,\n                    encrypted_note,\n                    validator_identity_key\n                FROM quarantined_note_history\n                WHERE quarantine_height BETWEEN $1 AND $2\n                ORDER BY quarantine_height ASC",
+    "describe": {
+      "columns": [
+        {
+          "ordinal": 0,
+          "name": "quarantine_height",
+          "type_info": "Int8"
+        },
+        {
+          "ordinal": 1,
+          "name": "unbonding_height",
+          "type_info": "Int8"
+        },
+        {
+          "ordinal": 2,
+          "name": "note_commitment",
+          "type_info": "Bytea"
+        },
+        {
+          "ordinal": 3,
+          "name": "ephemeral_key",
+          "type_info": "Bytea"
+        },
+        {
+          "ordinal": 4,
+          "name": "encrypted_note",
+          "type_info": "Bytea"
+        },
+        {
+          "ordinal": 5,
+          "name": "validator_identity_key",
+          "type_info": "Bytea"
+        }
+      ],
+      "parameters": {
+        "Left": [
+          "Int8",
+          "Int8"
+        ]
+      },
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        false,
         false
       ]
     }

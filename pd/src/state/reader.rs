@@ -16,7 +16,8 @@ use penumbra_crypto::{
 };
 use penumbra_proto::{
     chain,
-    light_wallet::{CompactBlock, StateFragment},
+    light_wallet::{CompactBlock, QuarantinedFragment, StateFragment},
+    stake,
     thin_wallet::{Asset, TransactionDetail},
     Protobuf,
 };
@@ -446,11 +447,17 @@ impl Reader {
             .fetch(&pool)
             .peekable();
 
-            let mut quarantined_note_commitments = query!(
-                "SELECT quarantine_height, note_commitment
-                    FROM quarantined_note_history
-                    WHERE quarantine_height BETWEEN $1 AND $2
-                    ORDER BY quarantine_height ASC",
+            let mut quarantined_notes = query!(
+                "SELECT
+                    quarantine_height,
+                    unbonding_height,
+                    note_commitment,
+                    ephemeral_key,
+                    encrypted_note,
+                    validator_identity_key
+                FROM quarantined_note_history
+                WHERE quarantine_height BETWEEN $1 AND $2
+                ORDER BY quarantine_height ASC",
                 start_height,
                 end_height
             )
@@ -473,7 +480,7 @@ impl Reader {
                     height: height as u64,
                     fragments: vec![],
                     nullifiers: vec![],
-                    quarantined_note_commitments: vec![],
+                    quarantined_notes: vec![],
                     reverted_nullifiers: vec![],
                 };
 
@@ -511,7 +518,7 @@ impl Reader {
                     });
                 }
 
-                while let Some(row) = Pin::new(&mut quarantined_note_commitments).peek().await {
+                while let Some(row) = Pin::new(&mut quarantined_notes).peek().await {
                     // Bail out of the loop if the next iteration would be a different height
                     if let Ok(row) = row {
                         if row.quarantine_height != height {
@@ -519,11 +526,19 @@ impl Reader {
                         }
                     }
 
-                    let row = Pin::new(&mut quarantined_note_commitments)
+                    let row = Pin::new(&mut quarantined_notes)
                         .next()
                         .await
                         .expect("we already peeked, so there is a next row")?;
-                    compact_block.quarantined_note_commitments.push(row.note_commitment.into());
+                    compact_block.quarantined_notes.push(QuarantinedFragment {
+                        fragment: Some(StateFragment {
+                            note_commitment: row.note_commitment.into(),
+                            ephemeral_key: row.ephemeral_key.into(),
+                            encrypted_note: row.encrypted_note.into(),
+                        }),
+                        validator_identity_key: Some(stake::IdentityKey { ik: row.validator_identity_key }),
+                        unbonding_height: row.unbonding_height.try_into().expect("unbonding height is positive"),
+                    });
                 }
 
                 while let Some(row) = Pin::new(&mut reverted_nullifiers).peek().await {
