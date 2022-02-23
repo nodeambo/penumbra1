@@ -245,9 +245,12 @@ impl Writer {
 
         // Drop quarantined notes associated with a validator slashed in this block
         for note_commitment in block.reverting_notes {
+            let note_commitment_bytes = <[u8; 32]>::from(note_commitment);
+
+            // Drop this note from the quarantine set
             query!(
                 "DELETE FROM quarantined_notes WHERE note_commitment = $1",
-                &<[u8; 32]>::from(note_commitment)[..]
+                &note_commitment_bytes[..]
             )
             .execute(&mut dbtx)
             .await?;
@@ -256,10 +259,21 @@ impl Writer {
         // Drop quarantined nullifiers from the main nullifier set if they were associated with a
         // validator slashed in this block (thus reverting their spend)
         for nullifier in block.reverting_nullifiers {
+            let nullifier_bytes = nullifier.to_bytes();
+
+            // Keep track of the historical fact that we reverted this nullifier
+            query!(
+                "INSERT INTO reverted_nullifier_history (nullifier, revert_height) VALUES ($1, $2)",
+                &nullifier_bytes[..],
+                height as i64,
+            )
+            .execute(&mut dbtx)
+            .await?;
+
             // Forget about this nullifier, making the associated note spendable again
             query!(
                 "DELETE FROM nullifiers WHERE nullifier = $1",
-                &nullifier.to_bytes()[..]
+                &nullifier_bytes[..]
             )
             .execute(&mut dbtx)
             .await?;
@@ -267,7 +281,7 @@ impl Writer {
             // We have reverted this nullifier, so we can remove it from quarantine
             query!(
                 "DELETE FROM quarantined_nullifiers WHERE nullifier = $1",
-                &nullifier.to_bytes()[..]
+                &nullifier_bytes[..]
             )
             .execute(&mut dbtx)
             .await?;
@@ -325,6 +339,18 @@ impl Writer {
         {
             // Quarantine all notes associated with this quarantine group
             for (&note_commitment, data) in notes.iter() {
+                let note_commitment_bytes = <[u8; 32]>::from(note_commitment);
+
+                // Keep track of the historical quarantining of this note (held forever, even after
+                // the note is un-quarantined)
+                query!(
+                    "INSERT INTO quarantined_note_history (note_commitment, quarantine_height) VALUES ($1, $2)",
+                    &note_commitment_bytes[..],
+                    height as i64,
+                )
+                .execute(&mut dbtx)
+                .await?;
+
                 // Hold the note data in quarantine
                 query!(
                     r#"
@@ -336,7 +362,7 @@ impl Writer {
                         unbonding_height,
                         validator_identity_key
                     ) VALUES ($1, $2, $3, $4, $5, $6)"#,
-                    &<[u8; 32]>::from(note_commitment)[..],
+                    &note_commitment_bytes[..],
                     &data.ephemeral_key.0[..],
                     &data.encrypted_note[..],
                     &data.transaction_id[..],

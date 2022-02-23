@@ -654,6 +654,19 @@
       ]
     }
   },
+  "8cd491b15cf789e6d44fa3ce00ef7da1a96dfcb5a421526d4bd7b08e1736e799": {
+    "query": "INSERT INTO quarantined_note_history (note_commitment, quarantine_height) VALUES ($1, $2)",
+    "describe": {
+      "columns": [],
+      "parameters": {
+        "Left": [
+          "Bytea",
+          "Int8"
+        ]
+      },
+      "nullable": []
+    }
+  },
   "9024aaa179b92038a276abd92a8f20b3a28133ea8435c1d4d9ae4bc3ec31158a": {
     "query": "SELECT height, nct_anchor AS \"nct_anchor: merkle::Root\", app_hash FROM blocks ORDER BY height DESC LIMIT 1",
     "describe": {
@@ -771,6 +784,19 @@
       "nullable": [
         false
       ]
+    }
+  },
+  "bcbf38e129aeb8be1b996b86dec738c25aff39d951ae043b22f9819e819c34d3": {
+    "query": "INSERT INTO reverted_nullifier_history (nullifier, revert_height) VALUES ($1, $2)",
+    "describe": {
+      "columns": [],
+      "parameters": {
+        "Left": [
+          "Bytea",
+          "Int8"
+        ]
+      },
+      "nullable": []
     }
   },
   "c0838e2487bc88b229fe4b5ab786b11780d5196f3e88a5281e7a409171fe4734": {

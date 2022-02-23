@@ -116,7 +116,7 @@ CREATE INDEX ON delegation_changes (validator_identity_key);
 -- Set of quarantined notes: once the epoch is large enough, all old-enough quarantined notes should
 -- be inserted into the NCT and the notes table (and removed from this table)
 CREATE TABLE IF NOT EXISTS quarantined_notes (
-    note_commitment bytea PRIMARY KEY,
+    note_commitment bytea PRIMARY KEY REFERENCES quarantined_notes (note_commitment),
     ephemeral_key bytea NOT NULL,
     encrypted_note bytea NOT NULL,
     transaction_id bytea NOT NULL,
@@ -140,3 +140,21 @@ CREATE TABLE IF NOT EXISTS quarantined_nullifiers (
 );
 CREATE INDEX ON quarantined_nullifiers (unbonding_height);
 CREATE INDEX ON quarantined_nullifiers (validator_identity_key);
+
+-- History of quarantined notes, associated with the height at which they were quarantined
+CREATE TABLE IF NOT EXISTS quarantined_note_history (
+    note_commitment bytea PRIMARY KEY,
+    quarantine_height bigint NOT NULL, -- height at which note was quarantined
+    -- quarantine_height can't be negative
+    CONSTRAINT positive_quarantine_height CHECK (quarantine_height >= 0)
+);
+CREATE INDEX ON quarantined_note_history (quarantine_height);
+
+-- History of reverted nullifiers, associated with the height at which they were reverted
+CREATE TABLE IF NOT EXISTS reverted_nullifier_history (
+    nullifier bytea PRIMARY KEY,
+    revert_height bigint NOT NULL, -- height at which nullifier was reverted
+    -- revert_height can't be negative
+    CONSTRAINT positive_revert_height CHECK (revert_height >= 0)
+);
+CREATE INDEX ON reverted_nullifier_history (revert_height);
