@@ -661,7 +661,7 @@ impl ClientState {
             height,
             fragments,
             nullifiers,
-            quarantined_note_commitments,
+            quarantined_notes,
             reverted_nullifiers,
         }: CompactBlock,
     ) -> Result<(), anyhow::Error> {
