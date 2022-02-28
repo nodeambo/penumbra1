@@ -270,15 +270,8 @@ impl Writer {
             .execute(&mut dbtx)
             .await?;
 
-            // Forget about this nullifier, making the associated note spendable again
-            query!(
-                "DELETE FROM nullifiers WHERE nullifier = $1",
-                &nullifier_bytes[..]
-            )
-            .execute(&mut dbtx)
-            .await?;
-
-            // We have reverted this nullifier, so we can remove it from quarantine
+            // We have reverted this nullifier, so we can remove it from quarantine (making it
+            // spendable again)
             query!(
                 "DELETE FROM quarantined_nullifiers WHERE nullifier = $1",
                 &nullifier_bytes[..]
@@ -401,12 +394,24 @@ impl Writer {
             }
         }
 
-        // Mark spent notes as spent.
-        for nullifier in block.spent_nullifiers.into_iter() {
+        // Mark spent nullifiers as such (including unbonding nullifiers).
+        for nullifier in block
+            .spent_nullifiers
+            .into_iter()
+            .chain(block.unbonding_nullifiers.into_iter())
+        {
             query!(
                 "INSERT INTO nullifiers VALUES ($1, $2)",
                 &<[u8; 32]>::from(nullifier)[..],
                 height as i64,
+            )
+            .execute(&mut dbtx)
+            .await?;
+
+            // If the nullifier was previously quarantined, remove it from quarantine
+            query!(
+                "DELETE FROM quarantined_nullifiers WHERE nullifier = $1",
+                &<[u8; 32]>::from(nullifier)[..]
             )
             .execute(&mut dbtx)
             .await?;

@@ -82,7 +82,8 @@ impl Reader {
     /// Retrieve a nullifier if it exists.
     pub async fn nullifier(&self, nullifier: Nullifier) -> Result<Option<schema::NullifiersRow>> {
         let mut conn = self.pool.acquire().await?;
-        let nullifier_row = query!(
+
+        let mut nullifier_row = query!(
             r#"SELECT height FROM nullifiers WHERE nullifier = $1 LIMIT 1"#,
             &<[u8; 32]>::from(nullifier.clone())[..]
         )
@@ -92,6 +93,19 @@ impl Reader {
             nullifier,
             height: row.height,
         });
+
+        if nullifier_row.is_none() {
+            nullifier_row = query!(
+                r#"SELECT height FROM quarantined_nullifiers WHERE nullifier = $1 LIMIT 1"#,
+                &<[u8; 32]>::from(nullifier.clone())[..]
+            )
+            .fetch_optional(&mut conn)
+            .await?
+            .map(|row| schema::NullifiersRow {
+                nullifier,
+                height: row.quarantine_height,
+            });
+        }
 
         Ok(nullifier_row)
     }
