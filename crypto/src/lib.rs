@@ -14,6 +14,7 @@ pub mod note;
 mod nullifier;
 mod prf;
 pub mod proofs;
+pub mod threshold;
 pub mod value;
 
 pub use address::Address;
