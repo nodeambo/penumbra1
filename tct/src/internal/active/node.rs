@@ -89,6 +89,12 @@ impl<Child: Focus> Height for Node<Child> {
 
 impl<Child: Focus> GetHash for Node<Child> {
     fn hash(&self) -> Hash {
+        // If this active node is equivalent to an empty node, then its hash should be the
+        // default hash, not the computed hash all the way down to its leaf
+        if self.is_empty_equivalent() {
+            return Hash::default();
+        }
+
         // Extract the hashes of an array of `Insert<T>`s.
         fn hashes_of_all<T: GetHash, const N: usize>(full: [&Insert<T>; N]) -> [Hash; N] {
             full.map(|hash_or_t| match hash_or_t {
@@ -136,7 +142,21 @@ impl<Child: Focus> Focus for Node<Child> {
 
     #[inline]
     fn finalize(self) -> Insert<Self::Complete> {
-        complete::Node::from_siblings_and_focus_or_else_hash(self.siblings, self.focus.finalize())
+        // If this active node is equivalent to an empty node, then we should convert it into a
+        // default hash, *not* into a complete node
+        if self.is_empty_equivalent() {
+            Insert::Hash(Hash::default())
+        } else {
+            complete::Node::from_siblings_and_focus_or_else_hash(
+                self.siblings,
+                self.focus.finalize(),
+            )
+        }
+    }
+
+    #[inline]
+    fn is_empty_equivalent(&self) -> bool {
+        self.siblings.is_empty() && self.focus.is_empty_equivalent()
     }
 }
 

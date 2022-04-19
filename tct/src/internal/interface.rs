@@ -31,6 +31,9 @@ pub trait Focus: Height<Height = <Self::Complete as Height>::Height> + GetHash {
 
     /// Transition from an [`Active`] to being [`Complete`].
     fn finalize(self) -> Insert<Self::Complete>;
+
+    /// Check if this [`Active`] thing is empty.
+    fn is_empty_equivalent(&self) -> bool;
 }
 
 /// Marker trait for a type which is the frozen completion of some [`Focus`]ed insertion point.

@@ -67,6 +67,11 @@ impl Focus for Item {
     fn finalize(self) -> Insert<Self::Complete> {
         Insert::Keep(complete::Item::new(self.hash))
     }
+
+    #[inline]
+    fn is_empty_equivalent(&self) -> bool {
+        false
+    }
 }
 
 impl Witness for Item {

@@ -226,8 +226,7 @@ impl<Item: Focus> GetHash for Tier<Item> {
             Inner::Active(active) => active
                 .as_ref()
                 .as_ref()
-                .map(|active| active.cached_hash())
-                .unwrap_or_else(|| Some(Hash::default())),
+                .and_then(|active| active.cached_hash()),
             Inner::Complete(complete) => complete.cached_hash(),
             Inner::Hash(hash) => Some(*hash),
         }
@@ -252,6 +251,22 @@ impl<Item: Focus> Focus for Tier<Item> {
             }
             Inner::Complete(inner) => Insert::Keep(complete::Tier { inner }),
             Inner::Hash(hash) => Insert::Hash(hash),
+        }
+    }
+
+    #[inline]
+    fn is_empty_equivalent(&self) -> bool {
+        if let Inner::Active(active) = &self.inner {
+            if let Some(active) = active.as_ref() {
+                // The active thing is empty
+                active.is_empty_equivalent()
+            } else {
+                // This tier is empty
+                true
+            }
+        } else {
+            // This tier is complete, or hashed, so it is not empty
+            false
         }
     }
 }

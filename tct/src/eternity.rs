@@ -325,16 +325,26 @@ impl Eternity {
     /// Get the root hash of the most recent [`Block`] in the most recent [`Epoch`] of this
     /// [`Eternity`].
     ///
-    /// If the [`Eternity`] is empty or the most recent [`Epoch`] was inserted with
-    /// [`Eternity::insert_epoch_root`], returns `None`.
+    /// If the most recent [`Epoch`] was inserted with [`Eternity::insert_epoch_root`], returns
+    /// `None` (because the block root was not recorded, so cannot be retrieved).
     pub fn current_block_root(&self) -> Option<block::Root> {
-        self.inner.focus().and_then(|epoch| {
-            epoch
-                .as_ref()
-                .keep()?
-                .focus()
-                .map(|block| block::Root(block.hash()))
-        })
+        self.inner
+            .focus()
+            .map(|epoch| {
+                Some(block::Root(
+                    epoch
+                        .as_ref()
+                        .keep()? // Fail here if the epoch was inserted by root
+                        .focus()
+                        .map(|block| block.hash())
+                        // If the inner focus is `None`, that means the epoch is empty, so the root
+                        // of the block is the default hash
+                        .unwrap_or_else(Hash::default),
+                ))
+            })
+            // If the focus is `None` that means the eternity is empty, so the root of the current
+            // block is the default hash
+            .unwrap_or_else(|| Some(block::Root(Hash::default())))
     }
 
     /// Add a new [`Epoch`] all at once to this [`Eternity`].
@@ -442,10 +452,13 @@ impl Eternity {
     }
 
     /// Get the root hash of the most recent [`Epoch`] in this [`Eternity`].
-    ///
-    /// If the [`Eternity`] is empty, returns `None`.
-    pub fn current_epoch_root(&self) -> Option<epoch::Root> {
-        self.inner.focus().map(|epoch| epoch::Root(epoch.hash()))
+    pub fn current_epoch_root(&self) -> epoch::Root {
+        epoch::Root(
+            self.inner
+                .focus()
+                .map(|epoch| epoch.hash())
+                .unwrap_or_else(Hash::default),
+        )
     }
 
     /// The position in this [`Eternity`] at which the next [`Commitment`] would be inserted.
@@ -469,7 +482,7 @@ impl Eternity {
 
     /// Check whether this [`Eternity`] is empty.
     pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
+        self.inner.is_empty_equivalent()
     }
 
     /// Update the most recently inserted [`Epoch`] via methods on [`EpochMut`], and return the

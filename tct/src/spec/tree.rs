@@ -9,6 +9,8 @@ use super::Tier;
 
 /// A dense, non-incrememntal merkle tree with commitments at its leaves.
 pub enum Tree {
+    /// A subtier of the tree, either summarized by a hash, or witnessed.
+    Subtier { subtier: Insert<Option<Box<Tree>>> },
     /// An internal node, with a hash.
     Node {
         /// The hash of this node.
@@ -28,9 +30,47 @@ pub enum Tree {
 impl Tree {
     /// Get the root hash of this tree.
     pub fn root(&self) -> Hash {
+        if self.is_empty_equivalent() {
+            return Hash::default();
+        }
+
         match self {
+            Tree::Subtier { subtier } => match subtier {
+                Insert::Keep(subtier) => subtier
+                    .as_ref()
+                    .map(|subtier| subtier.root())
+                    .unwrap_or_default(),
+                Insert::Hash(hash) => *hash,
+            },
             Tree::Node { hash, .. } => *hash,
             Tree::Leaf { hash, .. } => *hash,
+        }
+    }
+
+    /// Determine if the tree is equivalent to an empty tree.
+    pub fn is_empty_equivalent(&self) -> bool {
+        match self {
+            Tree::Subtier { subtier } => match subtier {
+                Insert::Keep(subtier) => subtier
+                    .as_ref()
+                    .map(|subtier| subtier.is_empty_equivalent())
+                    .unwrap_or(true),
+                Insert::Hash(_) => false,
+            },
+            Tree::Node { children, .. } => match children.as_slice() {
+                [] => true,
+                [child] => child.is_empty_equivalent(),
+                _ => false,
+            },
+            Tree::Leaf { .. } => false,
+        }
+    }
+
+    /// Construct an empty [`Tree`] with no children.
+    fn empty_node() -> Tree {
+        Tree::Node {
+            hash: Hash::default(),
+            children: Vec::new(),
         }
     }
 
@@ -42,16 +82,39 @@ impl Tree {
     pub(super) fn from_eternity(eternity: Tier<Tier<Tier<Commitment>>>) -> Tree {
         use Tree::*;
 
+        // Ensure that [] == [[]] == [[[]]], i.e. that the empty eternity results in the same tree
+        // as the eternity containing the empty epoch, or the eternity containing the epoch
+        // containing the empty block.
+        if eternity.is_empty() {
+            // The eternity is empty
+            return Tree::empty_node();
+        } else if eternity.len() == 1 {
+            if let Insert::Keep(epoch) = eternity.front().unwrap() {
+                if epoch.is_empty() {
+                    // The eternity contains only a single empty epoch
+                    return Tree::empty_node();
+                } else if epoch.len() == 1 {
+                    if let Insert::Keep(block) = epoch.front().unwrap() {
+                        if block.is_empty() {
+                            // The eternity contains only a single empty epoch, which itself
+                            // contains only a single empty block
+                            return Tree::empty_node();
+                        }
+                    }
+                }
+            }
+        }
+
         let forest = eternity
             .into_iter()
             .map(|insert_epoch| match insert_epoch {
                 Insert::Keep(epoch) => Tree::from_epoch(epoch),
-                Insert::Hash(hash) => Node {
-                    hash,
-                    children: vec![],
+                Insert::Hash(hash) => Subtier {
+                    subtier: Insert::Hash(hash),
                 },
             })
             .collect();
+
         Tree::from_tier(16, forest)
     }
 
@@ -63,16 +126,31 @@ impl Tree {
     pub(super) fn from_epoch(epoch: Tier<Tier<Commitment>>) -> Tree {
         use Tree::*;
 
+        // Ensure that [] == [[]], i.e. that the empty epoch results in the same tree as the epoch
+        // containing the empty block.
+        if epoch.is_empty() {
+            // If the epoch is empty, return the empty tree with the default hash.
+            return Tree::empty_node();
+        } else if epoch.len() == 1 {
+            // If this epoch contains only a single empty block, collapse it away (this means that the
+            // hash of the empty epoch and the epoch containing an empty block will be the same).
+            if let Insert::Keep(block) = epoch.front().unwrap() {
+                if block.is_empty() {
+                    return Tree::empty_node();
+                }
+            }
+        }
+
         let forest = epoch
             .into_iter()
             .map(|insert_block| match insert_block {
                 Insert::Keep(block) => Tree::from_block(block),
-                Insert::Hash(hash) => Node {
-                    hash,
-                    children: vec![],
+                Insert::Hash(hash) => Subtier {
+                    subtier: Insert::Hash(hash),
                 },
             })
             .collect();
+
         Tree::from_tier(8, forest)
     }
 
@@ -83,6 +161,13 @@ impl Tree {
     /// If the size of the tier is greater than 4^8.
     pub(super) fn from_block(block: Tier<Commitment>) -> Tree {
         use Tree::*;
+
+        // If the block is empty, return the empty tree with the default hash.
+        if block.is_empty() {
+            return Tree::Subtier {
+                subtier: Insert::Keep(None),
+            };
+        }
 
         let forest = block
             .into_iter()
@@ -97,6 +182,7 @@ impl Tree {
                 },
             })
             .collect();
+
         Tree::from_tier(0, forest)
     }
 
@@ -107,14 +193,6 @@ impl Tree {
     /// If the size of the tier is greater than 4^8.
     fn from_tier(base_height: u8, mut forest: VecDeque<Tree>) -> Tree {
         use Tree::*;
-
-        // An empty tier should result in a node with the default hash
-        if forest.is_empty() {
-            return Node {
-                hash: Hash::default(),
-                children: vec![],
-            };
-        }
 
         for height in base_height + 1..=base_height + 8 {
             let mut new_forest = VecDeque::with_capacity(
@@ -192,6 +270,16 @@ impl Tree {
                         index_with_at(child, index_here, f);
                     }
                 }
+                Subtier {
+                    subtier: Insert::Keep(Some(subtier)),
+                    ..
+                } => {
+                    index_with_at(subtier, index_here, f);
+                }
+                Subtier {
+                    subtier: Insert::Hash(_) | Insert::Keep(None),
+                    ..
+                } => { /* nothing to index in a hashed or empty subtier */ }
             }
         }
 
@@ -238,6 +326,12 @@ impl Tree {
                 // child to push the rest of the path onto the back of the auth path
                 auth_path.push(siblings);
                 witness_onto(child, height - 1, index, auth_path);
+            } else if let Tree::Subtier { subtier, .. } = tree {
+                if let Insert::Keep(Some(subtier)) = subtier {
+                    witness_onto(subtier, height, index, auth_path);
+                } else {
+                    /* nothing to witness in a hashed subtier */
+                }
             } else if height != 0 {
                 panic!("leaf at non-zero height");
             }

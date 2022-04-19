@@ -283,10 +283,13 @@ impl Epoch {
     }
 
     /// Get the root hash of the most recent [`Block`] in this [`Epoch`].
-    ///
-    /// If the [`Epoch`] is empty, returns `None`.
-    pub fn current_block_root(&self) -> Option<block::Root> {
-        self.inner.focus().map(|block| block::Root(block.hash()))
+    pub fn current_block_root(&self) -> block::Root {
+        block::Root(
+            self.inner
+                .focus()
+                .map(|block| block.hash())
+                .unwrap_or_else(Hash::default),
+        )
     }
 
     /// The position in this [`Epoch`] at which the next [`Commitment`] would be inserted.
@@ -310,7 +313,7 @@ impl Epoch {
 
     /// Check whether this [`Epoch`] is empty.
     pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
+        self.inner.is_empty_equivalent()
     }
 }
 

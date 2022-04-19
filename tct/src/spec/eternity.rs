@@ -265,30 +265,66 @@ impl Eternity {
     ///
     /// See [`crate::Eternity::current_block_root`].
     pub fn current_block_root(&self) -> Option<crate::block::Root> {
-        let mut tree = &self.tree;
-        for _ in 0..16 {
-            if let Tree::Node { children, .. } = tree {
-                tree = children.last()?;
-            } else {
-                return None;
+        // Try to get the root of the most recent block, returning a nested `Option` with the outer
+        // layer representing the latest epoch, and the inner layer representing the latest block
+        let try_block_root = || -> Option<Option<Hash>> {
+            let mut tree = &self.tree;
+
+            // Drill down to the latest epoch
+            for _ in 0..8 {
+                if let Tree::Node { children, .. } = tree {
+                    tree = children.last()?;
+                } else {
+                    panic!("unexpected leaf in `Eternity::current_block_root`");
+                }
             }
-        }
-        Some(crate::block::Root(tree.root()))
+
+            // If this epoch doesn't have children, determine whether we should return the default
+            // hash as the root of the latest block
+            match tree {
+                Tree::Subtier { subtier } => match subtier {
+                    Insert::Keep(None) => return None,
+                    Insert::Hash(_) => return Some(None),
+                    Insert::Keep(Some(subtier)) => tree = &**subtier,
+                },
+                _ => panic!("unexpected leaf in `Eternity::current_block_root`"),
+            }
+
+            // Drill down to the latest block from the latest epoch
+            for _ in 0..8 {
+                if let Tree::Node { children, .. } = tree {
+                    tree = children.last()?;
+                } else {
+                    panic!("unexpected leaf in `Eternity::current_block_root`");
+                }
+            }
+
+            Some(Some(tree.root()))
+        };
+
+        Some(crate::block::Root(
+            try_block_root().unwrap_or_else(|| Some(Hash::default()))?,
+        ))
     }
 
     /// Get the epoch root of the current epoch of this [`Eternity`], if any.
     ///
     /// See [`crate::Eternity::current_epoch_root`].
-    pub fn current_epoch_root(&self) -> Option<crate::epoch::Root> {
-        let mut tree = &self.tree;
-        for _ in 0..8 {
-            if let Tree::Node { children, .. } = tree {
-                tree = children.last()?;
-            } else {
-                return None;
+    pub fn current_epoch_root(&self) -> crate::epoch::Root {
+        let try_epoch_root = || {
+            let mut tree = &self.tree;
+            for _ in 0..8 {
+                if let Tree::Node { children, .. } = tree {
+                    tree = children.last()?;
+                } else {
+                    panic!("unexpected leaf in `Eternity::current_epoch_root`");
+                }
             }
-        }
-        Some(crate::epoch::Root(tree.root()))
+
+            Some(tree.root())
+        };
+
+        crate::epoch::Root(try_epoch_root().unwrap_or_else(Hash::default))
     }
 
     /// Get the [`Position`] at which the next [`Commitment`] would be inserted.
@@ -316,7 +352,10 @@ impl Eternity {
     ///
     /// See [`crate::Eternity::is_empty`].
     pub fn is_empty(&self) -> bool {
-        if let Tree::Node { ref children, hash } = self.tree {
+        if let Tree::Node {
+            ref children, hash, ..
+        } = self.tree
+        {
             hash == Hash::default() && children.is_empty()
         } else {
             false

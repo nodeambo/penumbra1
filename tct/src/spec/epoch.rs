@@ -182,16 +182,20 @@ impl Epoch {
     /// Get the block root of the current block of this [`Epoch`], if any.
     ///
     /// See [`crate::Epoch::current_block_root`].
-    pub fn current_block_root(&self) -> Option<crate::block::Root> {
-        let mut tree = &self.tree;
-        for _ in 0..8 {
-            if let Tree::Node { children, .. } = tree {
-                tree = children.last()?;
-            } else {
-                return None;
+    pub fn current_block_root(&self) -> crate::block::Root {
+        let try_block_root = || {
+            let mut tree = &self.tree;
+            for _ in 0..8 {
+                if let Tree::Node { children, .. } = tree {
+                    tree = children.last()?;
+                } else {
+                    panic!("unexpected leaf in `Epoch::current_block_root`");
+                }
             }
-        }
-        Some(crate::block::Root(tree.root()))
+            Some(tree.root())
+        };
+
+        crate::block::Root(try_block_root().unwrap_or_else(Hash::default))
     }
 
     /// Get the [`Position`] at which the next [`Commitment`] would be inserted.
@@ -219,7 +223,10 @@ impl Epoch {
     ///
     /// See [`crate::Epoch::is_empty`].
     pub fn is_empty(&self) -> bool {
-        if let Tree::Node { ref children, hash } = self.tree {
+        if let Tree::Node {
+            ref children, hash, ..
+        } = self.tree
+        {
             hash == Hash::default() && children.is_empty()
         } else {
             false

@@ -256,7 +256,7 @@ impl Block {
 
     /// Check whether the underlying [`Block`] is empty.
     pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
+        self.inner.is_empty_equivalent()
     }
 }
 

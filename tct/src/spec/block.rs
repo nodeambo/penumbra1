@@ -143,7 +143,10 @@ impl Block {
     ///
     /// See [`crate::Block::is_empty`].
     pub fn is_empty(&self) -> bool {
-        if let Tree::Node { ref children, hash } = self.tree {
+        if let Tree::Node {
+            ref children, hash, ..
+        } = self.tree
+        {
             hash == Hash::default() && children.is_empty()
         } else {
             false

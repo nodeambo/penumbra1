@@ -24,6 +24,11 @@ impl<T> Three<T> {
         }
     }
 
+    /// Check whether this [`Three`] is empty.
+    pub fn is_empty(&self) -> bool {
+        self.elems.is_empty()
+    }
+
     /// Push a new item into this [`Three`], or return exactly four items (including the pushed
     /// item) if the [`Three`] is already full.
     ///

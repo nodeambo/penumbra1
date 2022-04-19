@@ -97,6 +97,14 @@ impl<Item: Focus> Focus for Leaf<Item> {
             },
         }
     }
+
+    #[inline]
+    fn is_empty_equivalent(&self) -> bool {
+        match self.item {
+            Insert::Keep(ref item) => item.is_empty_equivalent(),
+            Insert::Hash(_) => false,
+        }
+    }
 }
 
 impl<Item: Witness> Witness for Leaf<Item> {
