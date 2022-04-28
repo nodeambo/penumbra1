@@ -16,6 +16,8 @@ pub enum State {
     /// The validator has been slashed, and undelegations will occur immediately with no unbonding
     /// period.
     Slashed,
+    /// The validator has been manually retired by the owner.
+    Retired,
 }
 
 impl std::fmt::Display for State {
@@ -27,6 +29,7 @@ impl std::fmt::Display for State {
                 write!(f, "Unbonding (unbonding epoch: {})", unbonding_epoch)
             }
             State::Slashed => write!(f, "Slashed"),
+            State::Retired => write!(f, "Retired"),
         }
     }
 }
@@ -45,6 +48,7 @@ impl From<State> for pb::ValidatorState {
                 State::Active => pb::validator_state::ValidatorStateEnum::Active,
                 State::Unbonding { .. } => pb::validator_state::ValidatorStateEnum::Unbonding,
                 State::Slashed => pb::validator_state::ValidatorStateEnum::Slashed,
+                State::Retired => pb::validator_state::ValidatorStateEnum::Retired,
             } as i32,
         }
     }

@@ -801,6 +801,15 @@ impl Component for Staking {
                 .is_some()
             {
                 // This is an existing validator definition.
+                // First, check to see if it's a retirement or a normal update.
+                if v.validator.sequence_number == u32::MAX {
+                    // This is a retirement so the state needs updating appropriately.
+
+                    self.state.update_validator(v.validator).await.unwrap();
+                    continue;
+                }
+
+                // This is not a retirement.
                 // This means that only the Validator struct itself needs updating, not any rates/power/state.
                 self.state.update_validator(v.validator).await.unwrap();
             } else {
