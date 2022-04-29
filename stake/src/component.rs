@@ -1219,11 +1219,21 @@ pub trait View: StateExt {
             .await
     }
 
+    async fn validator_unbonding_status(
+        &self,
+        identity_key: &IdentityKey,
+    ) -> Result<Option<validator::UnbondingStatus>> {
+        self.get_domain(format!("staking/validators/{}/unbonding_status", identity_key).into())
+            .await
+    }
+
     /// Convenience method to assemble a [`ValidatorStatus`].
     async fn validator_status(
         &self,
         identity_key: &IdentityKey,
     ) -> Result<Option<validator::Status>> {
+        // TODO: replace w/ using the higher level `ValidatorStatus` struct
+        let unbonding_status = self.validator_unbonding_status(identity_key).await?;
         let state = self.validator_state(identity_key).await?;
         let power = self.validator_power(identity_key).await?;
         let identity_key = identity_key.clone();
@@ -1232,6 +1242,7 @@ pub trait View: StateExt {
                 identity_key,
                 state,
                 voting_power,
+                unbonding_status,
             })),
             _ => Ok(None),
         }
