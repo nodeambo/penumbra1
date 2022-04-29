@@ -44,7 +44,13 @@ extern crate derivative;
 extern crate serde;
 
 mod error;
+pub use error::{InsertBlockError, InsertEpochError, InsertError};
+
+#[cfg(any(doc, feature = "internal"))]
+pub mod index;
+#[cfg(not(any(doc, feature = "internal")))]
 mod index;
+
 mod proof;
 mod serialize;
 mod tree;
